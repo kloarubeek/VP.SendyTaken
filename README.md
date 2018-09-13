@@ -3,7 +3,7 @@
 Werk de Sendy database bij:
 
 ```console
-dotnet SendyTaken -t
+dotnet SendyTaken.dll -t
 ```
 
 - -t Werk inlogtokens bij.
