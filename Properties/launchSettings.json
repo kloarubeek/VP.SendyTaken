@@ -1,0 +1,11 @@
+{
+  "profiles": {
+    "VerwijderWKUsers": {
+      "commandName": "Project",
+      "commandLineArgs": "-t",
+      "environmentVariables": {
+        "ASPNETCORE_ENVIRONMENT": "Production"
+      }
+    }
+  }
+}
