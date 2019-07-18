@@ -37,7 +37,7 @@ namespace VerwijderWKUsers
                     await VerplaatsToernooiUsers(sendySettings, sendyClient);
                     break;
                 case Arguments.UpdateLoginTokens:
-                    await WerkActieveDeelnemersBij(sendySettings, sendyClient, args);
+                    await WerkDeelnemersBij(sendySettings, sendyClient, args);
                     break;
                 default:
                     Console.WriteLine("HELP");
@@ -73,47 +73,54 @@ namespace VerwijderWKUsers
                 };
 
                 Console.WriteLine($"Verwijder user {user.Email}, {user.Id}");
-                await sendyClient.DeleteSubscriber(user.Email, sendySettings.HuidigeDeelnemersLijstId);
+                await sendyClient.DeleteSubscriberAsync(user.Email, sendySettings.HuidigeDeelnemersLijstId);
 
                 if (user.Nieuwsbrief)
                 {
                     Console.WriteLine($"Voeg toe aan lijst {user.Email}, ({user.Id}");
-                    await sendyClient.Subscribe(user.Email, user.Naam, sendySettings.VerplaatsNaarLijstId, customFields);
+                    await sendyClient.SubscribeAsync(user.Email, user.Naam, sendySettings.VerplaatsNaarLijstId, customFields);
                 }
             }
         }
 
-        private static async Task WerkActieveDeelnemersBij(SendyApiSettings sendySettings, SendyClient sendyClient, string[] args)
+        private static async Task WerkDeelnemersBij(SendyApiSettings sendySettings, SendyClient sendyClient, string[] args)
         {
             var vanafUserId = 0;
             if (args.Length > 1)
                 int.TryParse(args[1], out vanafUserId);
 
             await InsertLoginTokens();
-            var users = await GetActieveUsers(vanafUserId);
+            var users = await GetAllUsers(vanafUserId);
 
             foreach (var user in users)
             {
-                var customFields = new Dictionary<string, string>
-                {
-                    { "LoginToken", user.EmailLoginToken?.Token },
-                    { "UserId", user.Id.ToString() },
-                    { "Teamnaam", user.Teamnaam },
-                    { "Nieuwsbrief", user.Nieuwsbrief.ToString() },
-                    { "Reminder", user.Reminder.ToString() },
-                    { "Language", user.Taal }
-                };
+                var status = await sendyClient.SubscriptionStatusAsync(user.Email, sendySettings.HuidigeDeelnemersLijstId);
 
-                var result = await sendyClient.Subscribe(user.Email, user.Naam, sendySettings.HuidigeDeelnemersLijstId, customFields);
-    
-                //No success? Then the user is already subscribed. In case it's subscribed, the data will be updated.
-                if (!result.IsSuccess)
+                // Al ingeschreven en nieuwsbrief ontvangen? Dan custom fields bijwerken
+                // Bestaat nog niet in mailing list maar wel nieuwsbrief ontvangen? Dan toevoegen.
+                if (
+                    (string.Compare(status.Response, "Subscribed", StringComparison.OrdinalIgnoreCase) == 0 && user.Nieuwsbrief) ||
+                    (!status.IsSuccess && string.Compare(status.ErrorMessage, "Email does not exist in list", StringComparison.OrdinalIgnoreCase) == 0 && user.Nieuwsbrief)
+                )
                 {
-                    Console.WriteLine($"Email {user.Email} not subscribed (probably updated): {result.ErrorMessage}");
+                    var customFields = new Dictionary<string, string>
+                    {
+                        { "LoginToken", user.EmailLoginToken?.Token },
+                        { "UserId", user.Id.ToString() },
+                        { "Teamnaam", user.Teamnaam },
+                        { "Nieuwsbrief", user.Nieuwsbrief.ToString() },
+                        { "Reminder", user.Reminder.ToString() },
+                        { "Language", user.Taal },
+                        { "IsActive", user.Actief.ToString() }
+                    };
+                    var result = await sendyClient.SubscribeAsync(user.Email, user.Naam, sendySettings.HuidigeDeelnemersLijstId, customFields);
+
+                    Console.WriteLine($"{user.Id} {user.Email}: {result.IsSuccess} {result.ErrorMessage}{result.Response}");
                 }
-                else
+                else if(user.Nieuwsbrief == false)
                 {
-                    Console.WriteLine($"Email {user.Email} subscribed.");
+                    var result = await sendyClient.UnsubscribeAsync(user.Email, sendySettings.HuidigeDeelnemersLijstId);
+                    Console.WriteLine($"{user.Id} {user.Email}: unsubscribed: {status.Response}");
                 }
             }
         }
@@ -131,15 +138,14 @@ namespace VerwijderWKUsers
             }
         }
 
-        private static async Task<List<User>> GetActieveUsers(int vanafUserId)
+        private static async Task<List<User>> GetAllUsers(int vanafUserId)
         {
             using (var context = new VPDataContext(_configuration))
             {
                 return await context.Users
                     .Include(u => u.EmailLoginToken)
-                    .Where(u => u.Id > vanafUserId &&
-                        new[] { 0, 84 }.Contains(u.WebsiteId) &&
-                        u.Actief && u.Nieuwsbrief)
+                    .Where(u => u.Id >= vanafUserId &&
+                        new[] { 0, 84 }.Contains(u.WebsiteId))
                     .OrderBy(u => u.Id)
                     .ToListAsync();
             }
